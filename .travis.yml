@@ -6,37 +6,47 @@ services:
   - docker
 
 env:
-  - POSTGRES_IMAGE=postgres:11.6-alpine CLAIR_VERSION=v2.1.0 CLAIR_LOCAL_SCAN_IMAGE=arminc/clair-local-scan
+  - POSTGRES_IMAGE=postgres:11.6-alpine CLAIR_VERSION=${TRAVIS_TAG:-latest} CLAIR_DB_UPDATE_IMAGE=xiaoluhong/clair-db-update CLAIR_DB_UPDATE_REPO='github.com/xiaoluhong/clair-db-update'
 
 install:
-  - docker build -t $CLAIR_LOCAL_SCAN_IMAGE --build-arg VERSION=$CLAIR_VERSION clair
+  # 构建 clair-db-update 镜像
+  - docker build -t ${CLAIR_DB_UPDATE_IMAGE} --build-arg CLAIR_VERSION=${CLAIR_VERSION} clair
 
 before_script:
-  - docker pull $POSTGRES_IMAGE
-  - docker run -d --name postgres -e 'PGDATA=/var/lib/postgresql/clair' -e POSTGRES_PASSWORD=password $POSTGRES_IMAGE
-  - until docker run --rm -it --link postgres:postgres -e PGPASSWORD=password $POSTGRES_IMAGE pg_isready -U postgres -h postgres; do sleep 1; done
-  - docker run -d --name clair --link postgres:postgres $CLAIR_LOCAL_SCAN_IMAGE
+  # 运行 postgres db
+  - docker run -tid --name postgres -e 'PGDATA=/var/lib/postgresql/clair' -e POSTGRES_PASSWORD=password ${POSTGRES_IMAGE}
+  # 初始化 postgres db
+  - until docker run --rm -it --link postgres:postgres -e PGPASSWORD=password ${POSTGRES_IMAGE} pg_isready -U postgres -h postgres; do sleep 3; done
+  # 运行 clair-db-update 容器
+  - docker run -d --name clair-db-update --link postgres:postgres ${CLAIR_DB_UPDATE_IMAGE}
 
 script:
-  - ./check.sh
+  # 检查 clair-db-update 容器运行状态
+  - ./check.sh clair-db-update
 
 after_success:
-  - docker stop clair
-  - docker stop postgres
-  - docker commit postgres arminc/clair-db:$(date +%Y-%m-%d)
-  - docker tag arminc/clair-db:$(date +%Y-%m-%d) arminc/clair-db:latest
-  - docker tag $CLAIR_LOCAL_SCAN_IMAGE ${CLAIR_LOCAL_SCAN_IMAGE}:${CLAIR_VERSION}_${TRAVIS_COMMIT}
-  - docker images
+  # 停止 clair-db-update 容器
+  - docker stop clair-db-update
+  # 导出数据库文件
+  - docker exec -it postgres /bin/sh -c "pg_dump -U postgres -a -t feature -t keyvalue -t namespace -t schema_migrations -t vulnerability -t vulnerability_fixedin_feature" > /tmp/clair-${CLAIR_VERSION}-$(date +%Y-%m-%d)-vulnerability.sql
+  - docker exec -it postgres /bin/sh -c "pg_dump -U postgres -c -s" > /tmp/clair-${CLAIR_VERSION}-$(date +%Y-%m-%d)-clear.sql
 
 before_deploy:
-  - docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD"
+  - git config --global user.name "xiaoluhong"
+  - git config --global user.email "xiaoluhong@rancher.com"
+  - git config --global push.default simple
+  - sudo apt-get install jq git
 
 deploy:
   provider: script
   on:
-    branch: master
+    tags: true
   script:
-    docker push ${CLAIR_LOCAL_SCAN_IMAGE}:${CLAIR_VERSION}_${TRAVIS_COMMIT} &&
-    docker push $CLAIR_LOCAL_SCAN_IMAGE:latest && 
-    docker push arminc/clair-db:$(date +%Y-%m-%d) &&
-    docker push arminc/clair-db:latest
+    git clone https://${CLAIR_DB_UPDATE_REPO} && \
+    cd clair-db-update.git && \
+    cp -rf /tmp/clair-${CLAIR_VERSION}-$(date +%Y-%m-%d)-clear.sql /tmp/clair-${CLAIR_VERSION}-$(date +%Y-%m-%d)-vulnerability.sql . && \
+    git add . && \
+    git commit -m "update clair ${CLAIR_VERSION} db" && \
+    git push -f https://${GITHUB_USERNAME}:${GITHUB_PASSWORD}@${CLAIR_DB_UPDATE_REPO}.git
+
+
