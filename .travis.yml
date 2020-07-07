@@ -33,6 +33,7 @@ after_success:
   # 导出数据库文件
   - docker exec -it postgres /bin/sh -c "pg_dump -U postgres -a -t feature -t keyvalue -t namespace -t schema_migrations -t vulnerability -t vulnerability_fixedin_feature" > /tmp/clair-${CLAIR_VERSION}-$(date +%Y-%m-%d)-vulnerability.sql
   - docker exec -it postgres /bin/sh -c "pg_dump -U postgres -c -s" > /tmp/clair-${CLAIR_VERSION}-$(date +%Y-%m-%d)-clear.sql
+  - ls -all -h /tmp
 
 before_deploy:
   - git config --global user.name "xiaoluhong"
@@ -42,6 +43,8 @@ before_deploy:
 
 deploy:
   provider: script
+  on:
+    branch: master
   script:
     git clone https://${CLAIR_DB_UPDATE_REPO} && \
     cd clair-db-update.git && \
