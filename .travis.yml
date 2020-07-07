@@ -9,6 +9,8 @@ env:
   - POSTGRES_IMAGE=postgres:11.6-alpine CLAIR_VERSION=${TRAVIS_TAG:-latest} CLAIR_DB_UPDATE_IMAGE=xiaoluhong/clair-db-update CLAIR_DB_UPDATE_REPO='github.com/xiaoluhong/clair-db-update'
 
 install:
+  - echo ${CLAIR_VERSION}
+  - echo ${TRAVIS_TAG}
   # 构建 clair-db-update 镜像
   - docker build -t ${CLAIR_DB_UPDATE_IMAGE} --build-arg CLAIR_VERSION=${CLAIR_VERSION} clair
 
@@ -19,6 +21,7 @@ before_script:
   - until docker run --rm -it --link postgres:postgres -e PGPASSWORD=password ${POSTGRES_IMAGE} pg_isready -U postgres -h postgres; do sleep 3; done
   # 运行 clair-db-update 容器
   - docker run -d --name clair-db-update --link postgres:postgres ${CLAIR_DB_UPDATE_IMAGE}
+  - docker logs clair-db-update
 
 script:
   # 检查 clair-db-update 容器运行状态
